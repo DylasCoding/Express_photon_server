@@ -22,6 +22,16 @@ app.use(helmet());
 app.use(morgan('dev'));
 app.use(express.json());
 
+// THÊM ROUTE HEALTH CHECK
+app.get('/', (req, res) => {
+    res.status(200).json({
+        status: 'OK',
+        message: 'Game Server is running!',
+        timestamp: new Date().toISOString(),
+        version: '1.0.0'
+    });
+});
+
 app.use('/api/auth', authRoutes);
 app.use('/api/room', roomRoutes);
 // app.use('/api/game', gameRoutes);
