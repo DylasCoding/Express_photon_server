@@ -1,28 +1,27 @@
+// src/config/photon.js
 const Photon = require('photon-realtime');
+const { PHOTON_APP_ID, PHOTON_REGION } = process.env;
 
-const { PHOTON_APP_ID } = process.env;
-
-// Polyfill WebSocket cho Node.js (vì photon-realtime hỗ trợ ws)
-const WebSocket = require('ws');
+// Polyfill WebSocket cho Node.js
+global.WebSocket = require('ws');
 
 const client = new Photon.LoadBalancing.LoadBalancingClient(
-    Photon.ConnectionProtocol.Wss,  // Wss cho secure
+    Photon.ConnectionProtocol.Wss,
     PHOTON_APP_ID,
-    '1.0'  // App version (phải match với client Unity/JS)
+    '1.0' // Phải trùng với client Unity/JS
 );
 
-// Event handlers cơ bản
+// Event handlers (sẽ dùng trong service)
 client.onStateChange = (state) => {
-    console.log('Photon state:', Photon.LoadBalancing.LoadBalancingClient.StateToName(state));
+    console.log('Photon State:', Photon.LoadBalancing.LoadBalancingClient.StateToName(state));
 };
 
-client.onEvent = (code, data) => {
-    console.log('Photon event received:', code, data);
-    // Broadcast event đến room members (realtime play)
+client.onEvent = (code, content, actorNr) => {
+    console.log('Photon Event:', { code, content, actorNr });
 };
 
-client.onError = (error) => {
-    console.error('Photon error:', error);
+client.onError = (err) => {
+    console.error('Photon Error:', err);
 };
 
 module.exports = { client, Photon };

@@ -1,67 +1,89 @@
+// src/services/photonService.js
 const { client, Photon } = require('../config/photon');
 
-const PHOTON_REGION = process.env.PHOTON_REGION;
-
 class PhotonService {
-    async connect() {
-        if (client.isConnected) return;
+    async ensureConnected() {
+        if (client.isConnectedToMaster) return;
+
         return new Promise((resolve, reject) => {
-            client.setOnLoad(() => {
-                client.connectToRegionMaster(PHOTON_REGION);
-            });
-            client.onStateChange = (state) => {
+            const timeout = setTimeout(() => reject(new Error('Photon connect timeout')), 10000);
+
+            const onStateChange = (state) => {
                 if (state === Photon.LoadBalancing.LoadBalancingClient.State.ConnectedToMaster) {
+                    clearTimeout(timeout);
+                    client.removeOnStateChange(onStateChange); // Gỡ listener
                     resolve();
-                } else if (state === Photon.LoadBalancing.LoadBalancingClient.State.Disconnect) {
-                    reject(new Error('Disconnected from Photon'));
+                } else if (state === Photon.LoadBalancing.LoadBalancingClient.State.Disconnected) {
+                    clearTimeout(timeout);
+                    client.removeOnStateChange(onStateChange);
+                    reject(new Error('Photon disconnected'));
                 }
             };
+
+            client.addOnStateChange(onStateChange);
+            client.connectToRegionMaster(); // Tự động connect
         });
     }
 
-    async createRoom(hostId, maxPlayers = 4, roomName = 'default-room') {
-        await this.connect();
+    async createRoom(hostId, maxPlayers = 4, roomName = null) {
+        await this.ensureConnected();
+
+        if (!roomName) {
+            roomName = `room_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        }
+
         return new Promise((resolve, reject) => {
-            client.onStateChange = (state) => {
-                if (state === Photon.LoadBalancing.LoadBalancingClient.State.JoinedLobby) {
-                    client.joinRoom(roomName, {
-                        createIfNotExists: true,
-                        maxPlayers,
-                        customRoomProperties: { hostId, status: 'waiting' }
+            const onStateChange = (state) => {
+                if (state === Photon.LoadBalancing.LoadBalancingClient.State.Joined) {
+                    client.removeOnStateChange(onStateChange);
+                    resolve({
+                        roomId: client.myRoom().name,
+                        actorNr: client.myActor().actorNr
                     });
-                } else if (state === Photon.LoadBalancing.LoadBalancingClient.State.Joined) {
-                    resolve({ roomId: roomName, actorNr: client.myRoom().actorNumber });
                 }
             };
-            client.onError = reject;
+
+            client.addOnStateChange(onStateChange);
+            client.createRoom(roomName, {
+                maxPlayers,
+                isVisible: true,
+                isOpen: true,
+                customRoomProperties: { hostId, status: 'waiting' }
+            });
         });
     }
 
     async joinRoom(roomId, playerId) {
-        await this.connect();
+        await this.ensureConnected();
+
         return new Promise((resolve, reject) => {
-            client.joinRoom(roomId);
-            client.onStateChange = (state) => {
+            const onStateChange = (state) => {
                 if (state === Photon.LoadBalancing.LoadBalancingClient.State.Joined) {
-                    resolve({ success: true, actorNr: client.myRoom().actorNumber });
+                    client.removeOnStateChange(onStateChange);
+                    resolve({
+                        success: true,
+                        actorNr: client.myActor().actorNr
+                    });
                 }
             };
-            client.onError = reject;
+
+            client.addOnStateChange(onStateChange);
+            client.joinRoom(roomId);
         });
     }
 
-    async leaveRoom(roomId) {
-        client.leaveRoom();
+    async leaveRoom() {
+        if (client.myRoom()) {
+            client.leaveRoom();
+        }
     }
 
-    // Gửi event realtime (ví dụ: player move trong play)
-    sendEvent(eventCode, data, roomId) {
-        if (client.myRoom().name === roomId) {
-            client.raiseEvent(
-                eventCode,  // Ví dụ: 1 = move, 2 = shoot
-                data,       // { x: 10, y: 20, playerId }
-                { receivers: Photon.LoadBalancing.Constants.ReceiverGroup.All }  // Gửi cho tất cả trong room
-            );
+    // Gửi event realtime (move, shoot,...)
+    raiseEvent(code, data) {
+        if (client.myRoom()) {
+            client.raiseEvent(code, data, {
+                receivers: Photon.LoadBalancing.Constants.ReceiverGroup.All
+            });
         }
     }
 }
