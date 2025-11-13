@@ -69,7 +69,10 @@ web_modules/
 .env
 .env.*
 !.env.example
+
+
 firebase-service-account.json
+/src/client_test.html
 
 # Next.js build output
 .next
