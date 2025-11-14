@@ -50,15 +50,21 @@ class PhotonService {
                 reject(new Error('Create room timeout'));
             }, 10000);
 
-            client.onRoomListUpdate = () => {}; // ignore
             client.onJoinRoom = () => {
                 clearTimeout(timeout);
+                const room = client.myRoom();
                 resolve({
-                    roomId: client.myRoom().name,
+                    roomId: room.name,
                     region: PHOTON_REGION,
                     hostActorNr: client.myActor().actorNr
                 });
-                client.leaveRoom(); // Rời ngay để không giữ kết nối
+                // Rời room ngay để không giữ kết nối
+                setTimeout(() => client.leaveRoom(), 1000);
+            };
+
+            client.onError = (err) => {
+                clearTimeout(timeout);
+                reject(new Error(`Photon error: ${err}`));
             };
 
             const options = {
@@ -66,7 +72,11 @@ class PhotonService {
                 isVisible: true,
                 isOpen: true,
                 customRoomProperties: { hostId, status: 'waiting' },
-                customRoomPropertiesForLobby: ['hostId', 'status']
+                customRoomPropertiesForLobby: ['hostId', 'status'],
+                // TẮT WEBHOOK
+                createGameUrl: null,
+                joinGameUrl: null,
+                closeGameUrl: null
             };
 
             client.createRoom(roomName, options);
