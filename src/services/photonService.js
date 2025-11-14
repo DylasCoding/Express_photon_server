@@ -3,25 +3,27 @@ const { client, Photon } = require('../config/photon');
 
 class PhotonService {
     async ensureConnected() {
-        if (client.isConnectedToMaster) return;
+        if (client.isConnectedToMaster()) return;
 
         return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error('Photon connect timeout')), 10000);
+            const timeout = setTimeout(() => reject(new Error("Photon connect timeout")), 10000);
 
-            const onStateChange = (state) => {
+            const oldHandler = client.onStateChange;
+
+            client.onStateChange = (state) => {
                 if (state === Photon.LoadBalancing.LoadBalancingClient.State.ConnectedToMaster) {
                     clearTimeout(timeout);
-                    client.removeOnStateChange(onStateChange); // Gỡ listener
+                    client.onStateChange = oldHandler || null;
                     resolve();
-                } else if (state === Photon.LoadBalancing.LoadBalancingClient.State.Disconnected) {
+                }
+                else if (state === Photon.LoadBalancing.LoadBalancingClient.State.Disconnected) {
                     clearTimeout(timeout);
-                    client.removeOnStateChange(onStateChange);
-                    reject(new Error('Photon disconnected'));
+                    client.onStateChange = oldHandler || null;
+                    reject(new Error("Photon disconnected"));
                 }
             };
 
-            client.addOnStateChange(onStateChange);
-            client.connectToRegionMaster(); // Tự động connect
+            client.connectToRegionMaster();
         });
     }
 
@@ -33,9 +35,12 @@ class PhotonService {
         }
 
         return new Promise((resolve, reject) => {
-            const onStateChange = (state) => {
+            const oldHandler = client.onStateChange;
+
+            client.onStateChange = (state) => {
                 if (state === Photon.LoadBalancing.LoadBalancingClient.State.Joined) {
-                    client.removeOnStateChange(onStateChange);
+                    client.onStateChange = oldHandler || null;
+
                     resolve({
                         roomId: client.myRoom().name,
                         actorNr: client.myActor().actorNr
@@ -43,7 +48,6 @@ class PhotonService {
                 }
             };
 
-            client.addOnStateChange(onStateChange);
             client.createRoom(roomName, {
                 maxPlayers,
                 isVisible: true,
