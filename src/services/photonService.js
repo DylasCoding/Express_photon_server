@@ -1,65 +1,97 @@
 // src/services/photonService.js
-const axios = require('axios');
-const { APP_ID, SECRET_KEY, MANAGEMENT_API } = require('../config/photon');
+const { client, Photon, PHOTON_REGION } = require('../config/photon');
 
 class PhotonService {
+    constructor() {
+        this.isConnected = false;
+        this.pendingConnect = null;
+
+        client.onStateChange = (state) => this._handleStateChange(state);
+        client.onError = (error) => console.error('Photon Error:', error);
+    }
+
+    _handleStateChange(state) {
+        console.log('Photon State:', Photon.LoadBalancing.LoadBalancingClient.StateToName(state));
+
+        if (state === Photon.LoadBalancing.LoadBalancingClient.State.ConnectedToMaster) {
+            this.isConnected = true;
+            if (this.pendingConnect) {
+                this.pendingConnect.resolve();
+                this.pendingConnect = null;
+            }
+        }
+
+        if (state === Photon.LoadBalancing.LoadBalancingClient.State.Disconnected) {
+            this.isConnected = false;
+            if (this.pendingConnect) {
+                this.pendingConnect.reject(new Error('Disconnected'));
+            }
+        }
+    }
+
+    async ensureConnected() {
+        if (this.isConnected) return;
+
+        return new Promise((resolve, reject) => {
+            this.pendingConnect = { resolve, reject };
+            client.connectToRegionMaster(PHOTON_REGION);
+        });
+    }
+
     async createRoom(hostId, maxPlayers = 4, roomName = null) {
+        await this.ensureConnected();
+
         if (!roomName) {
             roomName = `room_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
         }
 
-        try {
-            const response = await axios.post(
-                `${MANAGEMENT_API}/v2/applications/${APP_ID}/rooms`,
-                {
-                    name: roomName,
-                    maxPlayers,
-                    isVisible: true,
-                    isOpen: true,
-                    customRoomProperties: {
-                        hostId,
-                        status: "waiting"
-                    }
-                },
-                {
-                    headers: {
-                        'Auth-Token': SECRET_KEY,
-                        'Content-Type': 'application/json'
-                    }
-                }
-            );
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error('Create room timeout'));
+            }, 10000);
 
-            return {
-                roomId: response.data.name,
-                region: 'asia', // Unity sẽ connect region này
-                hostActorNr: 1
+            client.onRoomListUpdate = () => {}; // ignore
+            client.onJoinRoom = () => {
+                clearTimeout(timeout);
+                resolve({
+                    roomId: client.myRoom().name,
+                    region: PHOTON_REGION,
+                    hostActorNr: client.myActor().actorNr
+                });
+                client.leaveRoom(); // Rời ngay để không giữ kết nối
             };
-        } catch (error) {
-            console.error('Photon createRoom error:', error.response?.data || error.message);
-            throw new Error(`Tạo room thất bại: ${error.response?.data?.message || error.message}`);
-        }
+
+            const options = {
+                maxPlayers,
+                isVisible: true,
+                isOpen: true,
+                customRoomProperties: { hostId, status: 'waiting' },
+                customRoomPropertiesForLobby: ['hostId', 'status']
+            };
+
+            client.createRoom(roomName, options);
+        });
     }
 
     async joinRoom(roomId, playerId) {
-        // Server KHÔNG cần join room (chỉ tạo + quản lý)
-        // Unity client tự join qua Photon Realtime
-        return {
-            success: true,
-            message: `Đã sẵn sàng join room ${roomId}`,
-            roomId
-        };
+        // Server không cần join, chỉ trả về OK
+        return { success: true, roomId, message: 'Ready to join' };
     }
 
     async listRooms() {
-        try {
-            const response = await axios.get(
-                `${MANAGEMENT_API}/v2/applications/${APP_ID}/rooms`,
-                { headers: { 'Auth-Token': SECRET_KEY } }
-            );
-            return response.data;
-        } catch (error) {
-            throw new Error(`Lấy danh sách room thất bại: ${error.message}`);
-        }
+        await this.ensureConnected();
+
+        return new Promise((resolve) => {
+            client.onRoomListUpdate = (rooms) => {
+                resolve(rooms.map(r => ({
+                    name: r.name,
+                    playerCount: r.playerCount,
+                    maxPlayers: r.maxPlayers,
+                    customRoomProperties: r.customProperties
+                })));
+            };
+            client.opGetRoomList(); // Lấy danh sách
+        });
     }
 }
 
