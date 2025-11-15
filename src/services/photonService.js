@@ -1,107 +1,211 @@
 // src/services/photonService.js
 const { client, Photon, PHOTON_REGION } = require('../config/photon');
+const logger = require('../utils/logger');
 
 class PhotonService {
     constructor() {
         this.isConnected = false;
         this.pendingConnect = null;
+        this.reconnectAttempts = 0;
+        this.maxReconnects = 3;
 
         client.onStateChange = (state) => this._handleStateChange(state);
-        client.onError = (error) => console.error('Photon Error:', error);
+        client.onError = (error) => {
+            console.error('Photon Error:', error);
+            this.isConnected = false;
+        };
     }
 
     _handleStateChange(state) {
-        console.log('Photon State:', Photon.LoadBalancing.LoadBalancingClient.StateToName(state));
+        const stateName = Photon.LoadBalancing.LoadBalancingClient.StateToName(state);
+        console.log('Photon State:', stateName);
 
-        if (state === Photon.LoadBalancing.LoadBalancingClient.State.ConnectedToMaster) {
-            this.isConnected = true;
-            if (this.pendingConnect) {
-                this.pendingConnect.resolve();
-                this.pendingConnect = null;
-            }
-        }
+        switch (state) {
+            case Photon.LoadBalancing.LoadBalancingClient.State.ConnectedToMaster:
+                this.isConnected = true;
+                this.reconnectAttempts = 0; // Reset
+                if (this.pendingConnect) {
+                    this.pendingConnect.resolve();
+                    this.pendingConnect = null;
+                }
+                break;
 
-        if (state === Photon.LoadBalancing.LoadBalancingClient.State.Disconnected) {
-            this.isConnected = false;
-            if (this.pendingConnect) {
-                this.pendingConnect.reject(new Error('Disconnected'));
-            }
+            case Photon.LoadBalancing.LoadBalancingClient.State.Disconnected:
+            case Photon.LoadBalancing.LoadBalancingClient.State.Error:
+                this.isConnected = false;
+                if (this.pendingConnect) {
+                    this.pendingConnect.reject(new Error(`Photon disconnected: ${stateName}`));
+                    this.pendingConnect = null;
+                }
+                break;
         }
     }
 
     async ensureConnected() {
-        if (this.isConnected) return;
+        if (this.isConnected && client.isConnectedToGameServer()) {
+            return;
+        }
 
         return new Promise((resolve, reject) => {
             this.pendingConnect = { resolve, reject };
+
+            // Kết nối đến region
             client.connectToRegionMaster(PHOTON_REGION);
+
+            const timeout = setTimeout(() => {
+                if (this.pendingConnect) {
+                    this.pendingConnect.reject(new Error('Connect timeout'));
+                    this.pendingConnect = null;
+                }
+            }, 10000);
+
+            // Ghi đè onStateChange tạm thời
+            const originalHandler = client.onStateChange;
+            client.onStateChange = (state) => {
+                const name = Photon.LoadBalancing.LoadBalancingClient.StateToName(state);
+                console.log(`[Photon] State: ${name}`);
+
+                if (state === Photon.LoadBalancing.LoadBalancingClient.State.ConnectedToMaster) {
+                    clearTimeout(timeout);
+                    this.isConnected = true;
+                    this.pendingConnect.resolve();
+                    this.pendingConnect = null;
+                    client.onStateChange = originalHandler;
+                } else if (state === Photon.LoadBalancing.LoadBalancingClient.State.Disconnected) {
+                    clearTimeout(timeout);
+                    this.pendingConnect.reject(new Error('Disconnected'));
+                    this.pendingConnect = null;
+                    client.onStateChange = originalHandler;
+                }
+            };
         });
     }
 
     async createRoom(hostId, maxPlayers = 4, roomName = null) {
-        await this.ensureConnected();
+        if (!this.isConnected) {
+            console.log('[Photon] Connecting...');
+            await this.ensureConnected();
+        }
 
         if (!roomName) {
-            roomName = `room_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+            roomName = `r${Date.now() % 100000}_${Math.floor(Math.random() * 1000)}`;
         }
+
+        console.log(`[Photon] Creating room: ${roomName} (max: ${maxPlayers})`);
+
+        console.log('[DEBUG] Photon State:', Photon.LoadBalancing.LoadBalancingClient.StateToName(client.state));
+        console.log('[DEBUG] In Lobby:', client.isInLobby());
+        console.log('[DEBUG] In Room:', client.isJoinedToRoom());
+        console.log('[DEBUG] Room Name:', client.myRoom()?.name || 'NONE');
+        console.log('[DEBUG] Actor Nr:', client.myActor()?.actorNr || 'NONE');
+        // console.log('[DEBUG] Room Actors:', client.myRoom()?.getActorCount?.() || 0);
 
         return new Promise((resolve, reject) => {
             const timeout = setTimeout(() => {
+                console.log(`[DEBUG 10s] Still in room? ${client.myRoom()?.name || 'DISCONNECTED'}`);
+                console.error('[Photon] Create room TIMEOUT');
+                cleanup();
                 reject(new Error('Create room timeout'));
-            }, 10000);
+            }, 15000);
 
-            client.onJoinRoom = () => {
-                clearTimeout(timeout);
+            // LƯU LẠI onError GỐC
+            const originalOnError = client.onError;
+
+            // Listener tạm: khi JOIN ROOM (tức là tạo thành công)
+            const onJoinRoom = () => {
                 const room = client.myRoom();
+                if (!room || room.name !== roomName) return; // Không phải phòng mình
+
+                clearTimeout(timeout);
+                cleanup();
+
+                console.log(`[Photon] Room CREATED & JOINED: ${room.name} | Actor: ${client.myActor()?.actorNr}`);
+
                 resolve({
                     roomId: room.name,
-                    region: PHOTON_REGION,
-                    hostActorNr: client.myActor().actorNr
+                    region: PHOTON_REGION
                 });
-                // Rời room ngay để không giữ kết nối
-                setTimeout(() => client.leaveRoom(), 1000);
+
+                // client.leaveRoom(room.id); // Rời phòng sau khi tạo xong
+                // client.disconnect();
             };
 
+            // Gán listener
+            client.onJoinRoom = onJoinRoom;
+
+            // Xử lý lỗi
             client.onError = (err) => {
                 clearTimeout(timeout);
-                reject(new Error(`Photon error: ${err}`));
+                cleanup();
+                console.error(`[Photon] CREATE FAILED: ${err.errorMessage || err}`);
+                reject(new Error(err.errorMessage || 'Photon error'));
+            };
+
+            // Hàm dọn dẹp
+            const cleanup = () => {
+                client.onJoinRoom = null;
+                client.onError = originalOnError;
             };
 
             const options = {
                 maxPlayers,
+                IsPersistent: true,
                 isVisible: true,
                 isOpen: true,
-                customRoomProperties: { hostId, status: 'waiting' },
-                customRoomPropertiesForLobby: ['hostId', 'status'],
-                // TẮT WEBHOOK
-                createGameUrl: null,
-                joinGameUrl: null,
-                closeGameUrl: null
+                customRoomProperties: {
+                    hostId,
+                    status: 'waiting',
+                    name: roomName
+                },
+                customRoomPropertiesForLobby: ['hostId', 'status', 'name'],
+                EmptyRoomTtl: 300000,  // 5 phút
+                PlayerTtl: 60000       // 60s
             };
 
+            // GỌI TẠO PHÒNG
             client.createRoom(roomName, options);
         });
     }
 
     async joinRoom(roomId, playerId) {
-        // Server không cần join, chỉ trả về OK
-        return { success: true, roomId, message: 'Ready to join' };
+        if (!this.isConnected) await this.ensureConnected();
+
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Join timeout')), 10000);
+
+            client.onJoinRoom = () => {
+                clearTimeout(timeout);
+                resolve({ success: true, roomId });
+                client.onJoinRoom = null;
+            };
+
+            client.onError = (err) => {
+                clearTimeout(timeout);
+                reject(err);
+            };
+
+            client.joinRoom(roomId);
+        });
     }
 
-    async listRooms() {
-        await this.ensureConnected();
+    async safeCleanup() {
+        if (client.isJoinedToRoom()) {
+            console.log('[Photon] Cleanup: Leaving room...');
+            // Rời phòng
+            client.leaveRoom();
+        }
 
-        return new Promise((resolve) => {
-            client.onRoomListUpdate = (rooms) => {
-                resolve(rooms.map(r => ({
-                    name: r.name,
-                    playerCount: r.playerCount,
-                    maxPlayers: r.maxPlayers,
-                    customRoomProperties: r.customProperties
-                })));
-            };
-            client.opGetRoomList(); // Lấy danh sách
-        });
+        // Chờ 0.5s để Photon xử lý lệnh leaveRoom
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        if (this.isConnected) {
+            console.log('[Photon] Cleanup: Disconnecting client...');
+            // Ngắt kết nối
+            client.disconnect();
+        }
+
+        this.isConnected = false;
+        // Bỏ qua logic reconnecting/reconnectAttempts
     }
 }
 
