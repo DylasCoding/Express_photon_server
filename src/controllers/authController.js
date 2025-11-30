@@ -52,6 +52,7 @@ const register = async (req, res) => {
             uid,
             username,
             passwordHash,
+            character: 1,
             level: 1,
             wins: 0,
             isGuest: false,
@@ -89,6 +90,15 @@ const login = async (req, res) => {
         const isValid = await bcrypt.compare(password, userData.passwordHash);
         if (!isValid) {
             return res.status(401).json({ error: 'Wrong password' });
+        }
+
+        // ⭐ AUTO PATCH: Thêm field mới nếu chưa có
+        const newFields = {};
+        if (userData.character === undefined) newFields.character = 1;
+
+        // Nếu có field cần update -> update trong DB
+        if (Object.keys(newFields).length > 0) {
+            await db.collection('users').doc(uid).update(newFields);
         }
 
         const token = jwt.sign({ uid }, process.env.JWT_SECRET, { expiresIn: '7d' });
