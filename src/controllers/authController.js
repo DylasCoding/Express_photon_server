@@ -105,7 +105,7 @@ const login = async (req, res) => {
 
         res.json({
             token,
-            user: { uid, username: userData.username, level: userData.level, wins: userData.wins }
+            user: { uid, username: userData.username, level: userData.level, wins: userData.wins, character: newFields.character || userData.character }
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
