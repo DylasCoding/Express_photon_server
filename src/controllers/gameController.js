@@ -1,4 +1,6 @@
 const firestoreService = require('../services/firestoreService');
+const { db } = require('../config/firebase');
+
 
 const endGame = async (req, res) => {
     const { roomId, scores, winnerId } = req.body;
@@ -46,4 +48,14 @@ const getGameState = async (req, res) => {
     }
 }
 
-module.exports = { endGame };
+const updateCharacter = async (req, res) => {
+    const { uid, character } = req.body;
+    try {
+        await firestoreService.saveUser(uid, { character });
+        res.status(200).json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+}
+
+module.exports = { endGame, updateCharacter };

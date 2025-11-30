@@ -5,7 +5,7 @@ const morgan = require('morgan');
 
 const authRoutes = require('./routes/auth');
 const roomRoutes = require('./routes/room');
-// const gameRoutes = require('./routes/game');
+const gameRoutes = require('./routes/game');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -34,7 +34,7 @@ app.get('/', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/room', roomRoutes);
-// app.use('/api/game', gameRoutes);
+app.use('/api/game', gameRoutes);
 
 app.use(errorHandler);
 
