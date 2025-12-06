@@ -27,26 +27,60 @@ const endGame = async (req, res) => {
     }
 };
 
-const startGame = async (req, res) => {
-    const { roomId, scores, winnerId } = req.body;
+const updateWinStreak = async (req, res) => {
+    const { uid, winStreak } = req.body;
+
     try {
-        const test1= 1;
-        res.status(200).json({ success: true });
-    }catch (err){
-        res.status(500).json({ error: err.message });
+        const userDoc = await db.collection('WinStreaks').doc(uid).get();
+
+        if (userDoc.exists) {
+            const currentWinStreak = userDoc.data().winStreak;
+
+            // Chỉ cập nhật nếu winStreak mới lớn hơn winStreak hiện tại
+            if (winStreak > currentWinStreak) {
+                await db.collection('WinStreaks').doc(uid).update({ winStreak });
+                return res.status(200).json({ success: true, message: 'WinStreak updated successfully.' });
+            } else {
+                return res.status(200).json({ success: false, message: 'New WinStreak is not greater than the current one.' });
+            }
+        } else {
+            // Tạo mới nếu chưa có winStreak
+            await db.collection('WinStreaks').doc(uid).set({ uid, winStreak });
+            return res.status(201).json({ success: true, message: 'WinStreak created successfully.' });
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
     }
+};
 
-}
 
-const getGameState = async (req, res) => {
-    const { roomId } = req.params;
+
+const getTopWinStreaks = async (req, res) => {
     try {
-        const gameState = 222;
-        res.status(200).json(gameState);
+        // Lấy 10 người có WinStreak cao nhất
+        const snapshot = await db.collection('WinStreaks')
+            .orderBy('winStreak', 'desc')
+            .limit(10)
+            .get();
+
+        const leaderboard = [];
+
+        for (const doc of snapshot.docs) {
+            const { uid, winStreak } = doc.data();
+
+            // Đối chiếu uid với username từ collection users
+            const userDoc = await db.collection('users').doc(uid).get();
+            const username = userDoc.exists ? userDoc.data().username : 'Unknown';
+
+            leaderboard.push({ uid, username, winStreak });
+        }
+
+        res.status(200).json(leaderboard);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
-}
+};
+
 
 const updateCharacter = async (req, res) => {
     const { uid, character } = req.body;
@@ -58,4 +92,4 @@ const updateCharacter = async (req, res) => {
     }
 }
 
-module.exports = { endGame, updateCharacter };
+module.exports = { endGame, updateCharacter,updateWinStreak,getTopWinStreaks };

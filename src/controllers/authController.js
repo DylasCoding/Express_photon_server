@@ -3,36 +3,7 @@ const { db } = require('../config/firebase');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid'); // npm install uuid
 
-// 1. Guest Login
-const guestLogin = async (req, res) => {
-    try {
-        const guestId = `guest_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-        const username = `Guest${Math.floor(Math.random() * 9999)}`;
-
-        const userRef = db.collection('users').doc(guestId);
-        const userData = {
-            uid: guestId,
-            username,
-            level: 1,
-            wins: 0,
-            isGuest: true,
-            createdAt: new Date()
-        };
-
-        await userRef.set(userData);
-
-        const token = jwt.sign({ uid: guestId }, process.env.JWT_SECRET, { expiresIn: '7d' });
-
-        res.json({
-            token,
-            user: userData
-        });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-};
-
-// 2. Register
+// 1. Register
 const register = async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
@@ -72,7 +43,7 @@ const register = async (req, res) => {
     }
 };
 
-// 3. Login
+// 2. Login
 const login = async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
@@ -105,11 +76,17 @@ const login = async (req, res) => {
 
         res.json({
             token,
-            user: { uid, username: userData.username, level: userData.level, wins: userData.wins, character: newFields.character || userData.character }
+            user: {
+                uid,
+                username: userData.username,
+                level: userData.level,
+                wins: userData.wins,
+                character: newFields.character || userData.character,
+            }
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 };
 
-module.exports = { guestLogin, register, login };
+module.exports = { register, login };
