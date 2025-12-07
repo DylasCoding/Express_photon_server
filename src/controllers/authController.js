@@ -36,7 +36,7 @@ const register = async (req, res) => {
 
         res.json({
             token,
-            user: { uid, username, level: 1, wins: 0 }
+            user: { uid, username, level: 1, wins: 0, winStreak: 0, character: 1 }
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -72,6 +72,11 @@ const login = async (req, res) => {
             await db.collection('users').doc(uid).update(newFields);
         }
 
+        // Fetch winStreak from WinStreaks collection (doc id = uid). Default to 0 if missing.
+        const winStreakRef = db.collection('WinStreaks').doc(uid);
+        const winStreakDoc = await winStreakRef.get();
+        const winStreak = winStreakDoc.exists ? (winStreakDoc.data().winStreak || 0) : 0;
+
         const token = jwt.sign({ uid }, process.env.JWT_SECRET, { expiresIn: '7d' });
 
         res.json({
@@ -82,6 +87,7 @@ const login = async (req, res) => {
                 level: userData.level,
                 wins: userData.wins,
                 character: newFields.character || userData.character,
+                winStreak
             }
         });
     } catch (err) {
