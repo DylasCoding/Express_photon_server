@@ -39,14 +39,20 @@ const updateWinStreak = async (req, res) => {
             // Chỉ cập nhật nếu winStreak mới lớn hơn winStreak hiện tại
             if (winStreak > currentWinStreak) {
                 await db.collection('WinStreaks').doc(uid).update({ winStreak });
-                return res.status(200).json({ success: true, message: 'WinStreak updated successfully.' });
+                return res.status(200).json({
+                    winStreak,
+                    success: true,
+                    message: 'WinStreak updated successfully.' });
             } else {
                 return res.status(200).json({ success: false, message: 'New WinStreak is not greater than the current one.' });
             }
         } else {
             // Tạo mới nếu chưa có winStreak
             await db.collection('WinStreaks').doc(uid).set({ uid, winStreak });
-            return res.status(201).json({ success: true, message: 'WinStreak created successfully.' });
+            return res.status(201).json({
+                winStreak,
+                success: true,
+                message: 'WinStreak created successfully.' });
         }
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
