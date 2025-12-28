@@ -1,6 +1,5 @@
 // src/services/photonService.js
 const { client, Photon, PHOTON_REGION } = require('../config/photon');
-const logger = require('../utils/logger');
 const { Mutex } = require('async-mutex');
 
 class PhotonService {
