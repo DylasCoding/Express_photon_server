@@ -18,12 +18,16 @@ class PhotonService {
 
     _handleStateChange(state) {
         const stateName = Photon.LoadBalancing.LoadBalancingClient.StateToName(state);
-        console.log('Photon State:', stateName);
+
+        // ✅ Chuyển phần Log quan trọng về đây
+        const IMPORTANT_STATES = ['ConnectedToMaster', 'Disconnected', 'Error'];
+        if (IMPORTANT_STATES.includes(stateName)) {
+            console.log(`[Photon Service] State Changed: ${stateName}`);
+        }
 
         switch (state) {
             case Photon.LoadBalancing.LoadBalancingClient.State.ConnectedToMaster:
                 this.isConnected = true;
-                this.reconnectAttempts = 0; // Reset
                 if (this.pendingConnect) {
                     this.pendingConnect.resolve();
                     this.pendingConnect = null;
@@ -81,84 +85,77 @@ class PhotonService {
             await this.ensureConnected();
         }
 
-        if (!roomName) {
-            roomName = `r${Date.now() % 100000}_${Math.floor(Math.random() * 1000)}`;
+        // 2. Tạo tên phòng ngẫu nhiên nếu không có
+        const finalRoomName = roomName || `r${Date.now() % 100000}_${Math.floor(Math.random() * 1000)}`;
+
+        console.log(`[Photon] Attempting to create room: ${finalRoomName}`);
+
+        // Lưu lại handler cũ để khôi phục sau khi xong việc (tránh mất callback hệ thống)
+        const originalOnJoinRoom = client.onJoinRoom;
+        const originalOnError = client.onError;
+
+        let timeoutId;
+
+        try {
+            // Sử dụng Promise để đợi kết quả từ Event của SDK
+            return await new Promise((resolve, reject) => {
+
+                // THIẾT LẬP TIMEOUT
+                timeoutId = setTimeout(() => {
+                    reject(new Error(`Create room TIMEOUT after 15s (Room: ${finalRoomName})`));
+                }, 15000);
+
+                // XỬ LÝ KHI JOIN PHÒNG THÀNH CÔNG (Tạo xong sẽ tự Join)
+                client.onJoinRoom = () => {
+                    const room = client.myRoom();
+                    // Kiểm tra xem có đúng phòng mình vừa yêu cầu tạo không
+                    if (room && room.name === finalRoomName) {
+                        console.log(`[Photon] Success! Room created: ${room.name}`);
+                        resolve({
+                            roomId: room.name,
+                            region: PHOTON_REGION,
+                            actorNr: client.myActor().actorNr
+                        });
+                    }
+                };
+
+                // XỬ LÝ KHI SDK BÁO LỖI
+                client.onError = (errorCode, errorMsg) => {
+                    console.error(`[Photon SDK Error] Code: ${errorCode} | Msg: ${errorMsg}`);
+                    reject(new Error(errorMsg || `Photon error code: ${errorCode}`));
+                };
+
+                // CẤU HÌNH PHÒNG
+                const options = {
+                    maxPlayers: Number(maxPlayers),
+                    isVisible: true,
+                    isOpen: true,
+                    customRoomProperties: {
+                        hostId: hostId,
+                        status: 'waiting'
+                    },
+                    customRoomPropertiesForLobby: ['hostId', 'status'],
+                    emptyRoomTtl: 300000, // Phòng trống tồn tại 5 phút
+                    playerTtl: 60000     // Player rớt mạng được giữ chỗ 60s
+                };
+
+                // GỌI LỆNH TẠO PHÒNG
+                client.createRoom(finalRoomName, options);
+            });
+
+        } catch (error) {
+            console.error(`[Photon Service] createRoom failed: ${error.message}`);
+            throw error; // Ném lỗi ra ngoài để API Controller xử lý (trả về 500)
+        } finally {
+            // 3. DỌN DẸP (CLEANUP): Luôn chạy dù thành công hay thất bại
+            if (timeoutId) clearTimeout(timeoutId);
+
+            // Khôi phục lại các handler cũ hoặc xóa bỏ listener tạm thời
+            client.onJoinRoom = originalOnJoinRoom || null;
+            client.onError = originalOnError || null;
+
+            console.log(`[Photon] Cleanup listeners for room: ${finalRoomName}`);
         }
-
-        console.log(`[Photon] Creating room: ${roomName} (max: ${maxPlayers})`);
-
-        console.log('[DEBUG] Photon State:', Photon.LoadBalancing.LoadBalancingClient.StateToName(client.state));
-        console.log('[DEBUG] In Lobby:', client.isInLobby());
-        console.log('[DEBUG] In Room:', client.isJoinedToRoom());
-        console.log('[DEBUG] Room Name:', client.myRoom()?.name || 'NONE');
-        console.log('[DEBUG] Actor Nr:', client.myActor()?.actorNr || 'NONE');
-        // console.log('[DEBUG] Room Actors:', client.myRoom()?.getActorCount?.() || 0);
-
-        return new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                console.log(`[DEBUG 10s] Still in room? ${client.myRoom()?.name || 'DISCONNECTED'}`);
-                console.error('[Photon] Create room TIMEOUT');
-                cleanup();
-                reject(new Error('Create room timeout'));
-            }, 15000);
-
-            // LƯU LẠI onError GỐC
-            const originalOnError = client.onError;
-
-            // Listener tạm: khi JOIN ROOM (tức là tạo thành công)
-            const onJoinRoom = () => {
-                const room = client.myRoom();
-                if (!room || room.name !== roomName) return; // Không phải phòng mình
-
-                clearTimeout(timeout);
-                cleanup();
-
-                console.log(`[Photon] Room CREATED & JOINED: ${room.name} | Actor: ${client.myActor()?.actorNr}`);
-
-                resolve({
-                    roomId: room.name,
-                    region: PHOTON_REGION
-                });
-
-                // client.leaveRoom(room.id); // Rời phòng sau khi tạo xong
-                // client.disconnect();
-            };
-
-            // Gán listener
-            client.onJoinRoom = onJoinRoom;
-
-            // Xử lý lỗi
-            client.onError = (err) => {
-                clearTimeout(timeout);
-                cleanup();
-                console.error(`[Photon] CREATE FAILED: ${err.errorMessage || err}`);
-                reject(new Error(err.errorMessage || 'Photon error'));
-            };
-
-            // Hàm dọn dẹp
-            const cleanup = () => {
-                client.onJoinRoom = null;
-                client.onError = originalOnError;
-            };
-
-            const options = {
-                maxPlayers,
-                IsPersistent: true,
-                isVisible: true,
-                isOpen: true,
-                customRoomProperties: {
-                    hostId,
-                    status: 'waiting',
-                    name: roomName
-                },
-                customRoomPropertiesForLobby: ['hostId', 'status', 'name'],
-                EmptyRoomTtl: 300000,  // 5 phút
-                PlayerTtl: 60000       // 60s
-            };
-
-            // GỌI TẠO PHÒNG
-            client.createRoom(roomName, options);
-        });
     }
 
     async joinRoom(roomId, playerId) {

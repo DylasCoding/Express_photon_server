@@ -1,11 +1,8 @@
-// src/config/photon.js
 const Photon = require('photon-realtime');
-require('ws');
+global.WebSocket = require('ws'); // Bắt buộc cho Node.js
 
 const PHOTON_APP_ID = process.env.PHOTON_APP_ID;
-const PHOTON_REGION = process.env.PHOTON_REGION;
-
-console.log("Photon region:", PHOTON_REGION);
+const PHOTON_REGION = process.env.PHOTON_REGION || 'asia';
 
 const client = new Photon.LoadBalancing.LoadBalancingClient(
     Photon.ConnectionProtocol.Wss,
@@ -13,27 +10,7 @@ const client = new Photon.LoadBalancing.LoadBalancingClient(
     '1.0'
 );
 
-// ✅ TẮT LOG SDK - DÙNG client.logger
-client.logger.level = 'error';  // Chỉ log error
-// hoặc
-// client.logger.level = 'warn'; // log warn + error
-
-// ✅ CHỈ LOG TRẠNG THÁI QUAN TRỌNG
-const IMPORTANT_STATES = [
-    'ConnectedToMaster',
-    'Disconnected',
-    'Error'
-];
-
-client.onStateChange = (state) => {
-    const name = Photon.LoadBalancing.LoadBalancingClient.StateToName(state);
-    if (IMPORTANT_STATES.includes(name)) {
-        console.log(`[Photon] State: ${name}`);
-    }
-};
-
-client.onError = (err) => {
-    console.error(`[Photon] ERROR: ${err}`);
-};
+// Chỉ để lại mức Log để tránh spam console
+client.logger.level = 'error';
 
 module.exports = { client, Photon, PHOTON_REGION };
