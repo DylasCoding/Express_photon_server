@@ -8,7 +8,7 @@ const PHOTON_REGION = process.env.PHOTON_REGION;
 console.log("Photon region:", PHOTON_REGION);
 
 const client = new Photon.LoadBalancing.LoadBalancingClient(
-    Photon.ConnectionProtocol.Ws,
+    Photon.ConnectionProtocol.Wss,
     PHOTON_APP_ID,
     '1.0'
 );

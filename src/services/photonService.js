@@ -42,43 +42,37 @@ class PhotonService {
     }
 
     async ensureConnected() {
-        if (this.isConnected && client.isConnectedToGameServer()) {
+        // Nếu đã kết nối, thoát luôn
+        if (client.state === Photon.LoadBalancing.LoadBalancingClient.State.ConnectedToMaster) {
+            this.isConnected = true;
             return;
         }
 
-        return new Promise((resolve, reject) => {
-            this.pendingConnect = { resolve, reject };
+        // Tránh việc gọi connect nhiều lần khi đang đợi
+        if (this.pendingConnect) return this.pendingConnect.promise;
 
-            // Kết nối đến region
-            client.connectToRegionMaster(PHOTON_REGION);
-
-            const timeout = setTimeout(() => {
-                if (this.pendingConnect) {
-                    this.pendingConnect.reject(new Error('Connect timeout'));
-                    this.pendingConnect = null;
-                }
-            }, 10000);
-
-            // Ghi đè onStateChange tạm thời
-            const originalHandler = client.onStateChange;
-            client.onStateChange = (state) => {
-                const name = Photon.LoadBalancing.LoadBalancingClient.StateToName(state);
-                console.log(`[Photon] State: ${name}`);
-
-                if (state === Photon.LoadBalancing.LoadBalancingClient.State.ConnectedToMaster) {
-                    clearTimeout(timeout);
-                    this.isConnected = true;
-                    this.pendingConnect.resolve();
-                    this.pendingConnect = null;
-                    client.onStateChange = originalHandler;
-                } else if (state === Photon.LoadBalancing.LoadBalancingClient.State.Disconnected) {
-                    clearTimeout(timeout);
-                    this.pendingConnect.reject(new Error('Disconnected'));
-                    this.pendingConnect = null;
-                    client.onStateChange = originalHandler;
-                }
-            };
+        let resolve, reject;
+        const promise = new Promise((res, rej) => {
+            resolve = res;
+            reject = rej;
         });
+
+        this.pendingConnect = { promise, resolve, reject };
+
+        const timeout = setTimeout(() => {
+            if (this.pendingConnect) {
+                this.pendingConnect.reject(new Error('Connect timeout'));
+                this.pendingConnect = null;
+            }
+        }, 15000); // Tăng lên 15s cho môi trường cloud
+
+        try {
+            client.connectToRegionMaster(PHOTON_REGION);
+        } catch (e) {
+            reject(e);
+        }
+
+        return promise;
     }
 
     async createRoom(hostId, maxPlayers = 4, roomName = null) {
