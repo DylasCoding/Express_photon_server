@@ -7,6 +7,5 @@ const router = express.Router();
 router.post('/create', protect, createRoom);
 router.post('/join/:roomId', protect, joinRoom);
 router.post('/search', protect, searchRoomByCode); // Thêm search room by join code
-router.get('/list', protect, listRooms); // Thêm list rooms
 
 module.exports = router;
